@@ -3,7 +3,7 @@ import numpy as np
 import os
 from tqdm import tqdm
 
-DATA_DIR = "backend/data"
+DATA_DIR = "data"
 TRAIN_FILES = [
     os.path.join(DATA_DIR, f"next_day_wildfire_spread_train_{i:02d}.tfrecord")
     for i in range(10)

@@ -45,7 +45,9 @@ ignis-ai-backend/ml/processed_y_test_class.npy
 ignis-ai-backend/ml/processed_X_test.npy
 ignis-ai-backend/ml/processed_X_train.npy
 
+# ML artifacts
 backend/ml/
-*.npy
 *.joblib
-*.json
+*.npy
+*.h5
+*.pt

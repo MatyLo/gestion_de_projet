@@ -44,3 +44,8 @@ ignis-ai-backend/ml/processed_y_test_regress.npy
 ignis-ai-backend/ml/processed_y_test_class.npy
 ignis-ai-backend/ml/processed_X_test.npy
 ignis-ai-backend/ml/processed_X_train.npy
+
+backend/ml/
+*.npy
+*.joblib
+*.json

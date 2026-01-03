@@ -270,3 +270,68 @@ def predict_fire_spread(lat: float, lng: float, brightness: float = 350.0) -> Di
         "geojson": {"type": "FeatureCollection", "features": features_geo}
     }
 
+
+def generate_heatmap_grid(lat: float, lng: float, brightness: float = 350.0, grid_size: int = 50) -> list:
+    """
+    Generate a heatmap grid showing fire spread probability across an area.
+    
+    Args:
+        lat: Center latitude
+        lng: Center longitude
+        brightness: Fire brightness/intensity
+        grid_size: Number of grid points (grid_size x grid_size)
+    
+    Returns:
+        List of [lat, lng, probability] tuples for heatmap visualization
+    """
+    # Get base prediction for the center point
+    base_result = predict_fire_spread(lat, lng, brightness)
+    base_prob = base_result['spread_probability']
+    spread_km = base_result['spread_distance_km']
+    wind_dir = base_result['spread_direction']
+    wind_angle = math.radians((270 - wind_dir) % 360)
+    
+    # Calculate grid bounds (2x the spread distance)
+    radius_km = spread_km * 2
+    lat_range = radius_km / 111.32
+    lng_range = radius_km / (111.32 * math.cos(math.radians(lat)))
+    
+    heatmap_data = []
+    
+    # Generate grid
+    for i in range(grid_size):
+        for j in range(grid_size):
+            # Calculate position in grid
+            lat_offset = (i / grid_size - 0.5) * 2 * lat_range
+            lng_offset = (j / grid_size - 0.5) * 2 * lng_range
+            
+            grid_lat = lat + lat_offset
+            grid_lng = lng + lng_offset
+            
+            # Calculate distance from center
+            distance_km = math.sqrt(
+                (lat_offset * 111.32) ** 2 + 
+                (lng_offset * 111.32 * math.cos(math.radians(lat))) ** 2
+            )
+            
+            # Calculate angle from center
+            angle = math.atan2(lat_offset, lng_offset)
+            angle_diff = abs(angle - wind_angle)
+            if angle_diff > math.pi:
+                angle_diff = 2 * math.pi - angle_diff
+            
+            # Probability decreases with distance
+            distance_factor = max(0, 1 - (distance_km / (spread_km * 2)))
+            
+            # Higher probability in wind direction
+            direction_factor = 0.3 + 0.7 * (1 - angle_diff / math.pi)
+            
+            # Combine factors
+            probability = base_prob * distance_factor * direction_factor
+            
+            # Only add points with significant probability
+            if probability > 0.1:
+                heatmap_data.append([grid_lat, grid_lng, probability])
+    
+    return heatmap_data
+

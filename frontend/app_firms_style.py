@@ -103,33 +103,19 @@ if 'active_layers' not in st.session_state:
     }
 
 # Load fires from NASA FIRMS
-def load_nasa_fires(country=None, days=1, bbox=None):
+@st.cache_data(ttl=300)
+def load_nasa_fires(country=None, days=1, source="VIIRS_NOAA20_NRT"):
     try:
         params = {"source": "nasa", "days": days}
         if country:
             params["country"] = country
-        elif bbox:
-            params["bbox_min_lat"] = bbox[0]
-            params["bbox_min_lng"] = bbox[1]
-            params["bbox_max_lat"] = bbox[2]
-            params["bbox_max_lng"] = bbox[3]
-        
         response = requests.get(f"{API_URL}/fires", params=params, timeout=30)
         if response.status_code == 200:
             data = response.json()
-            fires = data.get("fires", [])
-            print(f"DEBUG: {len(fires)} feux chargés depuis l'API")
-            if fires:
-                print(f"DEBUG: Premier feu: {fires[0]}")
-            return fires
-        else:
-            st.error(f"Erreur API: {response.status_code} - {response.text[:200]}")
-            return []
+            return data.get("fires", [])
     except Exception as e:
         st.error(f"Erreur: {str(e)}")
-        import traceback
-        st.error(traceback.format_exc())
-        return []
+    return []
 
 # Header
 col_logo, col_title, col_mode = st.columns([1, 3, 1])
@@ -176,57 +162,126 @@ with col_controls:
     st.markdown(f"**Selected:** {datetime.now().strftime('%b %d %Y')} - {st.session_state.time_range}")
     st.markdown('</div>', unsafe_allow_html=True)
     
-    # Options d'affichage
-    with st.expander("🔥 Options d'Affichage", expanded=True):
+    # Fires / Hotspots Section
+    with st.expander("🔥 Fires / Hotspots", expanded=True):
+        # Display Mode
+        col_simple, col_time = st.columns(2)
+        with col_simple:
+            simple_active = st.session_state.display_mode == "simple"
+            if st.button("Simple", use_container_width=True, type="primary" if simple_active else "secondary"):
+                st.session_state.display_mode = "simple"
+                st.rerun()
+        with col_time:
+            time_active = st.session_state.display_mode == "time"
+            if st.button("Time Based", use_container_width=True, type="primary" if time_active else "secondary"):
+                st.session_state.display_mode = "time"
+                st.rerun()
+        
+        st.divider()
+        
+        # Data Layers
+        st.markdown("**Data Layers:**")
+        
+        # VIIRS
+        col_viirs1, col_viirs2 = st.columns([3, 1])
+        with col_viirs1:
+            st.session_state.active_layers["viirs"] = st.checkbox(
+                "VIIRS (S-NPP, NOAA-20 & NOAA-21) [375m]",
+                value=st.session_state.active_layers["viirs"],
+                key="layer_viirs"
+            )
+        with col_viirs2:
+            st.info("ℹ️", help="VIIRS provides high-resolution fire detection")
+        
+        # MODIS
+        col_modis1, col_modis2 = st.columns([3, 1])
+        with col_modis1:
+            st.session_state.active_layers["modis"] = st.checkbox(
+                "MODIS (Aqua & Terra) [1km]",
+                value=st.session_state.active_layers["modis"],
+                key="layer_modis"
+            )
+        with col_modis2:
+            st.info("ℹ️", help="MODIS provides broad coverage fire detection")
+        
+        # Landsat
+        col_landsat1, col_landsat2 = st.columns([3, 1])
+        with col_landsat1:
+            st.session_state.active_layers["landsat"] = st.checkbox(
+                "Landsat [30m]",
+                value=st.session_state.active_layers["landsat"],
+                key="layer_landsat"
+            )
+        with col_landsat2:
+            st.info("ℹ️", help="Landsat provides very high resolution")
+        
+        st.divider()
+        
         # Prediction Options
-        st.markdown("**Prédiction AI:**")
+        st.markdown("**AI Prediction:**")
         st.session_state.show_predictions = st.checkbox(
-            "Afficher les Prédictions de Propagation",
+            "Show Spread Predictions",
             value=st.session_state.show_predictions,
-            help="Afficher les zones de propagation prédites par l'IA"
+            help="Display AI-predicted fire spread zones"
         )
         
         show_heatmap = st.checkbox(
-            "Afficher la Heatmap",
+            "Show Heatmap",
             value=False,
-            help="Afficher la carte de chaleur de probabilité de propagation"
+            help="Display heatmap of spread probability"
         )
+    
+    # Active Alerts Section
+    with st.expander("⚠️ Active Alerts", expanded=True):
+        st.markdown("""
+            <div class="alert-banner">
+                ⚠️ FIRES NOT DECLARED CONTAINED, CONTROLLED, NOR OUT.
+            </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("**Monitoring:**")
+        
+        # US Active Fires
+        col_us1, col_us2 = st.columns([3, 1])
+        with col_us1:
+            st.checkbox("US Active Fires - IMSR", value=True, key="alert_us")
+        with col_us2:
+            st.info("ℹ️", help="US Interagency Fire Management")
+        
+        # Canada Active Fires
+        col_can1, col_can2 = st.columns([3, 1])
+        with col_can1:
+            st.checkbox("Canada Active Fires - DIP", value=True, key="alert_can")
+        with col_can2:
+            st.info("ℹ️", help="Canadian Fire Information")
+        
+        # Fire Perimeter
+        col_perim1, col_perim2 = st.columns([3, 1])
+        with col_perim1:
+            st.checkbox("US Fire Perimeter", value=True, key="alert_perim")
+        with col_perim2:
+            st.info("ℹ️", help="Fire perimeter boundaries")
     
     # Load Data Button
     st.divider()
-    if st.button("🔄 Charger les Feux", type="primary", use_container_width=True):
-        with st.spinner("Chargement des feux depuis NASA FIRMS..."):
-            fires = load_nasa_fires(days=days)
-            st.session_state.active_fires = fires
-            if len(fires) > 0:
-                st.success(f"✅ {len(fires)} feux chargés avec prédictions")
+    if st.button("🔄 Load Fire Data", type="primary", use_container_width=True):
+        with st.spinner("Loading fire data..."):
+            st.session_state.active_fires = load_nasa_fires(days=days)
+            if len(st.session_state.active_fires) > 0:
+                st.success(f"✅ {len(st.session_state.active_fires)} fires loaded")
             else:
-                st.warning("⚠️ Aucun feu trouvé. Vérifiez que le backend fonctionne sur http://localhost:8000")
+                st.warning("⚠️ No fires found")
             st.rerun()
     
-    # Auto-load on first visit
-    if len(st.session_state.active_fires) == 0:
-        if st.button("🔄 Charger automatiquement", use_container_width=True):
-            with st.spinner("Chargement initial..."):
-                fires = load_nasa_fires(days=days)
-                st.session_state.active_fires = fires
-                if len(fires) > 0:
-                    st.success(f"✅ {len(fires)} feux chargés")
-                st.rerun()
-    
     # Statistics
-    st.divider()
-    st.markdown("### 📈 Statistiques")
     if st.session_state.active_fires:
-        total = len(st.session_state.active_fires)
-        st.metric("Total Feux", total)
+        st.divider()
+        st.markdown("### 📈 Statistics")
+        st.metric("Total Fires", len(st.session_state.active_fires))
         fires_with_pred = sum(1 for f in st.session_state.active_fires if f.get('prediction'))
-        st.metric("Avec Prédictions", fires_with_pred)
-        if total > 0:
-            avg_brightness = sum(f.get('brightness', 0) for f in st.session_state.active_fires) / total
-            st.metric("Brightness Moyen", f"{avg_brightness:.0f}")
-    else:
-        st.info("👆 Cliquez sur 'Charger les Feux' pour commencer")
+        st.metric("With Predictions", fires_with_pred)
+        avg_brightness = sum(f.get('brightness', 0) for f in st.session_state.active_fires) / len(st.session_state.active_fires)
+        st.metric("Avg Brightness", f"{avg_brightness:.0f}")
 
 with col_map:
     st.markdown("### 🗺️ Fire Map")
@@ -270,7 +325,11 @@ with col_map:
             acq_date = fire.get('acq_date', '')
             satellite = fire.get('satellite', '')
             
-            # Afficher tous les feux (pas de filtrage par couche pour simplifier)
+            # Filter by active layers
+            if satellite.startswith('N') and not st.session_state.active_layers["viirs"]:
+                continue
+            if satellite in ['Aqua', 'Terra'] and not st.session_state.active_layers["modis"]:
+                continue
             
             # Marker color based on brightness
             if brightness > 500:
@@ -287,10 +346,8 @@ with col_map:
                 <table style="width: 100%; font-size: 12px;">
                     <tr><td><b>Location:</b></td><td>{fire_lat:.4f}, {fire_lng:.4f}</td></tr>
                     <tr><td><b>Brightness:</b></td><td>{brightness:.0f}</td></tr>
-                    <tr><td><b>Date:</b></td><td>{acq_date} {fire.get('acq_time', '')}</td></tr>
+                    <tr><td><b>Date:</b></td><td>{acq_date}</td></tr>
                     <tr><td><b>Satellite:</b></td><td>{satellite}</td></tr>
-                    <tr><td><b>Instrument:</b></td><td>{fire.get('instrument', 'N/A')}</td></tr>
-                    {f'<tr><td><b>FRP:</b></td><td>{fire.get("frp", "N/A")} MW</td></tr>' if fire.get('frp') else ''}
             """
             
             # Add prediction info

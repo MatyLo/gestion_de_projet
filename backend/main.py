@@ -7,9 +7,15 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 import uvicorn
 from datetime import datetime
+import os
 
 from prediction import predict_fire_spread, generate_heatmap_grid
-from nasa_firms import get_firms_fires, get_firms_fires_by_bbox, get_firms_fires_by_country
+from nasa_firms import (
+    get_firms_fires,
+    get_firms_fires_by_bbox,
+    get_firms_fires_by_country,
+    get_firms_fires_from_csv,
+)
 
 # Create FastAPI app
 app = FastAPI(
@@ -95,6 +101,23 @@ async def predict(request: PredictionRequest):
         )
 
 
+@app.get("/predict_fire")
+async def predict_fire(
+    lat: float,
+    lng: float,
+    brightness: float = 350.0
+):
+    """
+    Predict a single fire on-demand. Query params: `lat`, `lng`, `brightness`.
+    Returns the same structure as `/predict`.
+    """
+    try:
+        result = predict_fire_spread(lat=lat, lng=lng, brightness=brightness)
+        return {"prediction": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Predict_fire failed: {str(e)}")
+
+
 # Active fires management
 @app.get("/fires")
 async def get_fires(
@@ -104,7 +127,9 @@ async def get_fires(
     bbox_min_lng: Optional[float] = None,
     bbox_max_lat: Optional[float] = None,
     bbox_max_lng: Optional[float] = None,
-    days: int = 1
+    days: int = 1,
+    csv_path: Optional[str] = None,
+    max_fires: int = 200
 ):
     """
     Get active fires from NASA FIRMS or manual fires.
@@ -156,6 +181,47 @@ async def get_fires(
             formatted_fires.append(formatted_fire)
         
         return {"fires": formatted_fires, "count": len(formatted_fires), "source": "nasa"}
+    elif source == "csv":
+        # Utiliser un fichier CSV local contenant les données FIRMS
+        csv_path = csv_path or os.getenv("NASA_FIRMS_CSV")
+        # Default to repository data folder if not provided
+        if not csv_path:
+            repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            csv_path = os.path.join(repo_root, "data", "MODIS_C6_1_Global_24h.csv")
+        if not csv_path:
+            raise HTTPException(status_code=400, detail="csv_path required when source=csv or set NASA_FIRMS_CSV env var")
+
+        # Convertir bbox si fourni
+        bbox = None
+        if bbox_min_lat is not None and bbox_min_lng is not None and bbox_max_lat is not None and bbox_max_lng is not None:
+            bbox = (bbox_min_lng, bbox_min_lat, bbox_max_lng, bbox_max_lat)
+
+        # When using a local CSV, skip strict date filtering by default (pass days=0)
+        fires_data = get_firms_fires_from_csv(csv_path, bbox=bbox, country=country, days=0)
+
+        # Limit number of fires to avoid long processing and timeouts
+        if isinstance(max_fires, int) and max_fires > 0:
+            fires_data = fires_data[:max_fires]
+
+        # For CSV mode, do not run predictions for every fire to keep response fast.
+        formatted_fires = []
+        for idx, fire in enumerate(fires_data):
+            formatted_fire = {
+                "id": idx + 1,
+                "lat": fire['lat'],
+                "lng": fire['lng'],
+                "brightness": fire.get('brightness', 350),
+                "name": f"Feu CSV {fire.get('acq_date', '')} {fire.get('acq_time', '')}",
+                "timestamp": f"{fire.get('acq_date', '')} {fire.get('acq_time', '')}",
+                "source": "csv_firms",
+                "confidence": fire.get('confidence'),
+                "satellite": fire.get('satellite', ''),
+                "frp": fire.get('frp'),
+                "prediction": None
+            }
+            formatted_fires.append(formatted_fire)
+
+        return {"fires": formatted_fires, "count": len(formatted_fires), "source": "csv"}
     else:
         # Retourner les feux manuels
         return {"fires": active_fires, "count": len(active_fires), "source": "manual"}

@@ -132,15 +132,12 @@ def load_nasa_fires(country=None, days=1, bbox=None):
         return []
 
 # Header
-col_logo, col_title, col_mode = st.columns([1, 3, 1])
+col_logo, col_title = st.columns([1, 4])
 with col_logo:
     st.markdown("### 🔥")
 with col_title:
     st.title("Fire Spread Prediction System")
     st.caption("Enhanced with AI Spread Prediction")
-with col_mode:
-    mode = st.selectbox("Mode", ["BASIC MODE", "ADVANCED MODE"], label_visibility="collapsed")
-    st.markdown(f"**{mode}**")
 
 # Main layout: Map left, Control panel right
 col_map, col_controls = st.columns([2.5, 1])
@@ -148,71 +145,42 @@ col_map, col_controls = st.columns([2.5, 1])
 with col_controls:
     st.markdown("### 📊 Control Panel")
     
-    # Time Range Selection
-    st.markdown('<div class="control-panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-header">📅 Time Range</div>', unsafe_allow_html=True)
-    
-    col_today, col_24h, col_7d = st.columns(3)
-    with col_today:
-        today_active = st.session_state.time_range == "TODAY"
-        if st.button("TODAY", use_container_width=True, disabled=today_active):
-            st.session_state.time_range = "TODAY"
-            st.rerun()
-    with col_24h:
-        h24_active = st.session_state.time_range == "24HRS"
-        if st.button("24HRS", use_container_width=True, disabled=h24_active):
-            st.session_state.time_range = "24HRS"
-            st.rerun()
-    with col_7d:
-        d7_active = st.session_state.time_range == "7DAYS"
-        if st.button("7DAYS", use_container_width=True, disabled=d7_active):
-            st.session_state.time_range = "7DAYS"
-            st.rerun()
-    
-    # Calculate days based on selection
-    days_map = {"TODAY": 1, "24HRS": 1, "7DAYS": 7}
-    days = days_map.get(st.session_state.time_range, 7)
-    
-    st.markdown(f"**Selected:** {datetime.now().strftime('%b %d %Y')} - {st.session_state.time_range}")
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Options d'affichage
-    with st.expander("🔥 Options d'Affichage", expanded=True):
-        # Prediction Options
-        st.markdown("**Prédiction AI:**")
-        st.session_state.show_predictions = st.checkbox(
-            "Afficher les Prédictions de Propagation",
-            value=st.session_state.show_predictions,
-            help="Afficher les zones de propagation prédites par l'IA"
-        )
-        
-        show_heatmap = st.checkbox(
-            "Afficher la Heatmap",
-            value=False,
-            help="Afficher la carte de chaleur de probabilité de propagation"
-        )
-    
-    # Load Data Button
-    st.divider()
-    if st.button("🔄 Charger les Feux", type="primary", use_container_width=True):
-        with st.spinner("Chargement des feux depuis NASA FIRMS..."):
-            fires = load_nasa_fires(days=days)
+    # Forcer le chargement depuis le CSV local (pas d'options d'affichage)
+    from pathlib import Path
+    repo_root = Path(__file__).resolve().parents[1]
+    CSV_PATH = os.getenv("NASA_FIRMS_CSV", str(repo_root / "data" / "MODIS_C6_1_Global_24h.csv"))
+    days = 1
+    MAX_FIRES = 200
+
+    def load_csv_fires(csv_path, days=1, country=None, bbox=None, max_fires=200):
+        try:
+            params = {"source": "csv", "csv_path": csv_path, "days": days, "max_fires": max_fires}
+            if country:
+                params["country"] = country
+            if bbox:
+                params["bbox_min_lat"] = bbox[0]
+                params["bbox_min_lng"] = bbox[1]
+                params["bbox_max_lat"] = bbox[2]
+                params["bbox_max_lng"] = bbox[3]
+            response = requests.get(f"{API_URL}/fires", params=params, timeout=120)
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("fires", [])
+            else:
+                st.error(f"Erreur API: {response.status_code} - {response.text[:200]}")
+                return []
+        except Exception as e:
+            st.error(f"Erreur: {str(e)}")
+            return []
+
+    # Auto-load CSV fires on first visit
+    if len(st.session_state.active_fires) == 0:
+        st.info(f"Chargement depuis: {CSV_PATH}")
+        with st.spinner("Chargement des feux depuis le fichier CSV local..."):
+            fires = load_csv_fires(CSV_PATH, days=days, max_fires=MAX_FIRES)
             st.session_state.active_fires = fires
             if len(fires) > 0:
-                st.success(f"✅ {len(fires)} feux chargés avec prédictions")
-            else:
-                st.warning("⚠️ Aucun feu trouvé. Vérifiez que le backend fonctionne sur http://localhost:8000")
-            st.rerun()
-    
-    # Auto-load on first visit
-    if len(st.session_state.active_fires) == 0:
-        if st.button("🔄 Charger automatiquement", use_container_width=True):
-            with st.spinner("Chargement initial..."):
-                fires = load_nasa_fires(days=days)
-                st.session_state.active_fires = fires
-                if len(fires) > 0:
-                    st.success(f"✅ {len(fires)} feux chargés")
-                st.rerun()
+                st.success(f"✅ {len(fires)} feux chargés depuis CSV")
     
     # Statistics
     st.divider()
@@ -261,7 +229,6 @@ with col_map:
     
     # Add fires to map
     if st.session_state.active_fires:
-        heatmap_points = []
         
         for fire in st.session_state.active_fires:
             fire_lat = fire['lat']
@@ -346,31 +313,7 @@ with col_map:
                                 opacity=0.6
                             ).add_to(m)
             
-            # Add to heatmap
-            if show_heatmap and fire.get('prediction'):
-                pred = fire['prediction']
-                heatmap_points.append([
-                    fire_lat,
-                    fire_lng,
-                    pred['spread_probability']
-                ])
-        
-        # Add heatmap
-        if show_heatmap and heatmap_points:
-            HeatMap(
-                heatmap_points,
-                min_opacity=0.2,
-                max_zoom=18,
-                radius=20,
-                blur=15,
-                gradient={
-                    0.2: 'blue',
-                    0.4: 'cyan',
-                    0.6: 'lime',
-                    0.7: 'yellow',
-                    1: 'red'
-                }
-            ).add_to(m)
+            
     
     # Add layer control
     folium.LayerControl().add_to(m)
@@ -382,6 +325,64 @@ with col_map:
         height=700,
         key="fire_map"
     )
+
+    # Handle marker clicks: call backend /predict_fire for clicked location
+    clicked = None
+    if isinstance(map_data, dict):
+        clicked = map_data.get('last_clicked') or map_data.get('last_object_clicked')
+
+    if clicked:
+        # Extract lat/lng from click
+        click_lat = None
+        click_lng = None
+        if isinstance(clicked, dict):
+            click_lat = clicked.get('lat') or clicked.get('latitude')
+            click_lng = clicked.get('lng') or clicked.get('lon') or clicked.get('longitude')
+
+        if click_lat is not None and click_lng is not None:
+            prev = st.session_state.get('last_click_pos')
+            if prev is None or (prev[0] != click_lat or prev[1] != click_lng):
+                st.session_state['last_click_pos'] = (click_lat, click_lng)
+                # Find nearest fire to get brightness if available
+                nearest = None
+                min_dist = None
+                for f in st.session_state.active_fires:
+                    try:
+                        dlat = f['lat'] - float(click_lat)
+                        dlng = f['lng'] - float(click_lng)
+                        dist2 = dlat * dlat + dlng * dlng
+                        if min_dist is None or dist2 < min_dist:
+                            min_dist = dist2
+                            nearest = f
+                    except Exception:
+                        continue
+
+                brightness = nearest.get('brightness', 350) if nearest else 350
+
+                # Call backend predict_fire
+                try:
+                    resp = requests.get(f"{API_URL}/predict_fire", params={
+                        'lat': float(click_lat), 'lng': float(click_lng), 'brightness': float(brightness)
+                    }, timeout=30)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        st.session_state['last_prediction'] = data.get('prediction')
+                    else:
+                        st.session_state['last_prediction'] = {'error': f"API {resp.status_code}"}
+                except Exception as e:
+                    st.session_state['last_prediction'] = {'error': str(e)}
+
+    # Show last prediction in control panel
+    if 'last_prediction' in st.session_state and st.session_state['last_prediction']:
+        with st.expander('🔎 Dernière prédiction (clic)', expanded=True):
+            pred = st.session_state['last_prediction']
+            if pred.get('error'):
+                st.error(pred.get('error'))
+            else:
+                st.write('Probabilité:', f"{pred['spread_probability']:.1%}")
+                st.write('Distance (km):', f"{pred['spread_distance_km']:.2f}")
+                st.write('Direction (°):', pred['spread_direction'])
+                st.json(pred.get('environmental_data', {}))
 
 # Footer
 st.divider()

@@ -6,6 +6,7 @@ import requests
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 import os
+import csv
 
 # NASA FIRMS API endpoint
 FIRMS_API_BASE = "https://firms.modaps.eosdis.nasa.gov/api"
@@ -143,6 +144,102 @@ def get_firms_fires(
         return []
     except Exception as e:
         print(f"Erreur lors du parsing des données FIRMS: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+
+def get_firms_fires_from_csv(
+    csv_path: str,
+    bbox: Optional[tuple] = None,
+    country: Optional[str] = None,
+    days: int = 1
+) -> List[Dict]:
+    """
+    Lire les feux depuis un fichier CSV local (ex: MODIS_C6_1_Global_24h.csv).
+
+    Args:
+        csv_path: Chemin vers le fichier CSV local
+        bbox: (min_lng, min_lat, max_lng, max_lat) pour filtrer (optionnel)
+        country: Filtrer par code pays si le CSV contient ce champ (optionnel)
+        days: Nombre de jours rétrospectifs à inclure (filtre sur `acq_date` si présent)
+
+    Returns:
+        Liste de dictionnaires au même format que `get_firms_fires`.
+    """
+    fires = []
+    try:
+        if not os.path.exists(csv_path):
+            print(f"CSV introuvable: {csv_path}")
+            return []
+
+        # Calculer la date minimale si days est fourni
+        date_min = None
+        if days and days > 0:
+            date_min = datetime.utcnow().date() - timedelta(days=days - 1)
+
+        with open(csv_path, newline='', encoding='utf-8') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                try:
+                    lat = float(row.get('latitude') or row.get('lat') or 0)
+                    lng = float(row.get('longitude') or row.get('lon') or row.get('lng') or 0)
+                except Exception:
+                    continue
+
+                # Filter by bbox if provided
+                if bbox:
+                    min_lng, min_lat, max_lng, max_lat = bbox
+                    if not (min_lat <= lat <= max_lat and min_lng <= lng <= max_lng):
+                        continue
+
+                # Filter by country if provided and CSV contains a country column
+                if country:
+                    country_field = row.get('country') or row.get('iso_country') or row.get('iso')
+                    if country_field and country_field.upper() != country.upper():
+                        continue
+
+                # Filter by date if possible
+                acq_date_str = row.get('acq_date') or row.get('date') or ''
+                if date_min and acq_date_str:
+                    try:
+                        d = datetime.strptime(acq_date_str.strip(), '%Y-%m-%d').date()
+                        if d < date_min:
+                            continue
+                    except Exception:
+                        # si le format de date est inconnu, on ne filtre pas
+                        pass
+
+                # Parse numeric fields
+                def to_float(x):
+                    try:
+                        return float(x) if x not in (None, '') else None
+                    except Exception:
+                        return None
+
+                brightness = to_float(row.get('brightness') or row.get('bright_ti4') or row.get('bright_ti5'))
+                frp = to_float(row.get('frp'))
+                confidence = to_float(row.get('confidence'))
+
+                fire = {
+                    'lat': lat,
+                    'lng': lng,
+                    'brightness': float(brightness) if brightness is not None else 350,
+                    'confidence': confidence,
+                    'acq_date': acq_date_str,
+                    'acq_time': row.get('acq_time') or row.get('time') or '',
+                    'satellite': row.get('satellite') or row.get('sat') or '',
+                    'instrument': row.get('instrument') or '',
+                    'frp': frp,
+                    'daynight': row.get('daynight') or '',
+                    'type': row.get('type') or ''
+                }
+
+                fires.append(fire)
+
+        return fires
+    except Exception as e:
+        print(f"Erreur lors de la lecture du CSV FIRMS: {e}")
         import traceback
         traceback.print_exc()
         return []

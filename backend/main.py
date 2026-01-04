@@ -6,8 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional
 import uvicorn
+from datetime import datetime
 
-from prediction import predict_fire_spread
+from prediction import predict_fire_spread, predict_direction
 
 # Create FastAPI app
 app = FastAPI(
@@ -31,7 +32,10 @@ class PredictionRequest(BaseModel):
     lat: float = Field(..., description="Latitude of fire location", ge=-90, le=90)
     lng: float = Field(..., description="Longitude of fire location", ge=-180, le=180)
     brightness: Optional[float] = Field(350.0, description="Fire brightness/intensity", ge=0, le=1000)
+    date: datetime = Field(...,description="Date of the fire observation (ISO 8601 format)")
 
+class PredictResponse(BaseModel):
+    direction: float
 
 # Root endpoint
 @app.get("/")
@@ -75,6 +79,30 @@ async def predict(request: PredictionRequest):
             brightness=request.brightness
         )
         return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Prediction failed: {str(e)}"
+        )
+
+# Direction Endpoint
+@app.post(
+    "/predict/direction",
+    summary="Predict fire spread direction",
+    description="Predicts the fire spread direction using location and date"
+)
+def predict_direction_endpoint(payload: PredictionRequest):
+    try:
+        prediction = predict_direction(
+            lat=payload.lat,
+            lng=payload.lng,
+            date=payload.date
+        )
+
+        return {
+            "direction": prediction
+        }
+
     except Exception as e:
         raise HTTPException(
             status_code=500,

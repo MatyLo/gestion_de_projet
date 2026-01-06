@@ -2,6 +2,7 @@ fastapi
 uvicorn[standard]
 pydantic
 numpy
+pandas
 joblib
 scikit-learn
 requests

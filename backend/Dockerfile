@@ -22,6 +22,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application files
 COPY main.py .
 COPY prediction.py .
+COPY fires.py .
 
 # Copy ML models
 COPY ml/wildfire_spread_classifier_advanced.joblib ml/

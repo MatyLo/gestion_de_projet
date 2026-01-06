@@ -82,12 +82,20 @@ if 'fires_data' not in st.session_state:
     st.session_state.fires_data = None
 if 'selected_fire_id' not in st.session_state:
     st.session_state.selected_fire_id = None
-if 'prediction_cache' not in st.session_state:
-    st.session_state.prediction_cache = {}
 if 'auto_predict' not in st.session_state:
     st.session_state.auto_predict = True
 if 'pending_prediction' not in st.session_state:
     st.session_state.pending_prediction = False
+if 'last_fire_clicked' not in st.session_state:
+    st.session_state.last_fire_clicked = None
+if 'map_refresh_counter' not in st.session_state:
+    st.session_state.map_refresh_counter = 0
+if 'user_map_center' not in st.session_state:
+    st.session_state.user_map_center = None
+if 'user_map_zoom' not in st.session_state:
+    st.session_state.user_map_zoom = None
+if 'fire_just_selected' not in st.session_state:
+    st.session_state.fire_just_selected = False
 
 # Sidebar for inputs
 with st.sidebar:
@@ -151,6 +159,9 @@ with st.sidebar:
                     if response.status_code == 200:
                         st.session_state.fires_data = response.json()
                         st.session_state.show_fires = True
+                        st.session_state.map_refresh_counter += 1
+                        st.session_state.user_map_center = None
+                        st.session_state.user_map_zoom = None
                         st.success(f"✅ Loaded {st.session_state.fires_data['count']} fires")
                         st.rerun()
                     else:
@@ -169,8 +180,11 @@ with st.sidebar:
                 st.session_state.show_fires = False
                 st.session_state.selected_fire_id = None
                 st.session_state.prediction_result = None
-                st.session_state.prediction_cache = {}
                 st.session_state.pending_prediction = False
+                st.session_state.last_fire_clicked = None
+                st.session_state.map_refresh_counter += 1
+                st.session_state.user_map_center = None
+                st.session_state.user_map_zoom = None
                 st.rerun()
         
         st.divider()
@@ -245,6 +259,36 @@ with st.sidebar:
     else:
         predict_button = st.button("🚀 Predict Fire Spread", type="primary")
 
+# Function to make prediction
+def make_prediction(lat, lng, brightness):
+    try:
+        response = requests.post(
+            f"{API_URL}/predict",
+            json={
+                "lat": lat,
+                "lng": lng,
+                "brightness": brightness
+            },
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return None
+    except Exception as e:
+        return None
+
+# Handle auto-prediction BEFORE rendering the map
+if st.session_state.pending_prediction and mode == "Active Fires":
+    if st.session_state.fires_data:
+        fire = next((f for f in st.session_state.fires_data['fires'] if f['id'] == st.session_state.selected_fire_id), None)
+        if fire:
+            result = make_prediction(fire['latitude'], fire['longitude'], fire['brightness'])
+            if result:
+                st.session_state.prediction_result = result
+    st.session_state.pending_prediction = False
+
 # Main content area
 col1, col2 = st.columns([2, 1])
 
@@ -269,7 +313,16 @@ with col1:
                 st.metric("Spread Risk", "N/A")
     
     # Determine map center
-    if st.session_state.fires_data and st.session_state.show_fires:
+    if st.session_state.fire_just_selected:
+        map_center = [st.session_state.selected_lat, st.session_state.selected_lng]
+        zoom_start = 10
+    elif st.session_state.user_map_center is not None and st.session_state.user_map_zoom is not None:
+        map_center = st.session_state.user_map_center
+        zoom_start = st.session_state.user_map_zoom
+    elif st.session_state.selected_fire_id is not None and st.session_state.fires_data:
+        map_center = [st.session_state.selected_lat, st.session_state.selected_lng]
+        zoom_start = 10
+    elif st.session_state.fires_data and st.session_state.show_fires:
         fires = st.session_state.fires_data['fires']
         if fires:
             avg_lat = sum(f['latitude'] for f in fires) / len(fires)
@@ -462,8 +515,20 @@ with col1:
         m,
         width=None,
         height=500,
-        key="map"
+        returned_objects=["last_object_clicked", "last_clicked"],
+        key=f"map_{st.session_state.map_refresh_counter}"
     )
+    
+    # Capture user's current map position
+    if map_data:
+        if map_data.get('center'):
+            st.session_state.user_map_center = [map_data['center']['lat'], map_data['center']['lng']]
+        if map_data.get('zoom'):
+            st.session_state.user_map_zoom = map_data['zoom']
+    
+    # Clear the fire_just_selected flag after map renders
+    if st.session_state.fire_just_selected:
+        st.session_state.fire_just_selected = False
     
     # Update selected location if map was clicked
     if input_method == "Map Click" and map_data and map_data.get('last_clicked'):
@@ -480,60 +545,26 @@ with col1:
             clicked_lat = clicked.get('lat')
             clicked_lng = clicked.get('lng')
             if clicked_lat and clicked_lng:
-                for fire in st.session_state.fires_data['fires']:
-                    if abs(fire['latitude'] - clicked_lat) < 0.01 and abs(fire['longitude'] - clicked_lng) < 0.01:
-                        previous_fire_id = st.session_state.selected_fire_id
-                        st.session_state.selected_fire_id = fire['id']
-                        st.session_state.selected_lat = fire['latitude']
-                        st.session_state.selected_lng = fire['longitude']
-                        
-                        if st.session_state.auto_predict and previous_fire_id != fire['id']:
-                            st.session_state.pending_prediction = True
-                        
-                        st.rerun()
-                        break
+                clicked_key = f"{clicked_lat:.4f}_{clicked_lng:.4f}"
+                
+                if st.session_state.last_fire_clicked != clicked_key:
+                    for fire in st.session_state.fires_data['fires']:
+                        if abs(fire['latitude'] - clicked_lat) < 0.01 and abs(fire['longitude'] - clicked_lng) < 0.01:
+                            previous_fire_id = st.session_state.selected_fire_id
+                            st.session_state.selected_fire_id = fire['id']
+                            st.session_state.selected_lat = fire['latitude']
+                            st.session_state.selected_lng = fire['longitude']
+                            st.session_state.last_fire_clicked = clicked_key
+                            st.session_state.fire_just_selected = True
+                            
+                            if st.session_state.auto_predict and previous_fire_id != fire['id']:
+                                st.session_state.pending_prediction = True
+                            
+                            st.rerun()
+                            break
 
 with col2:
     st.header("📊 Prediction Results")
-    
-    # Function to make prediction
-    def make_prediction(lat, lng, brightness, fire_id=None):
-        cache_key = f"{lat:.4f}_{lng:.4f}_{brightness:.1f}"
-        
-        if cache_key in st.session_state.prediction_cache:
-            return st.session_state.prediction_cache[cache_key]
-        
-        try:
-            response = requests.post(
-                f"{API_URL}/predict",
-                json={
-                    "lat": lat,
-                    "lng": lng,
-                    "brightness": brightness
-                },
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                st.session_state.prediction_cache[cache_key] = result
-                return result
-            else:
-                return None
-        except Exception as e:
-            st.error(f"❌ Error: {str(e)}")
-            return None
-    
-    # Handle auto-prediction
-    if st.session_state.pending_prediction and input_method == "Active Fires":
-        fire = next((f for f in st.session_state.fires_data['fires'] if f['id'] == st.session_state.selected_fire_id), None)
-        if fire:
-            with st.spinner("🔄 Auto-predicting fire spread..."):
-                result = make_prediction(fire['latitude'], fire['longitude'], fire['brightness'], fire['id'])
-                if result:
-                    st.session_state.prediction_result = result
-                st.session_state.pending_prediction = False
-                st.rerun()
     
     # Make prediction when button is clicked
     if predict_button:
@@ -541,7 +572,7 @@ with col2:
             if input_method == "Active Fires" and st.session_state.selected_fire_id is not None:
                 fire = next((f for f in st.session_state.fires_data['fires'] if f['id'] == st.session_state.selected_fire_id), None)
                 if fire:
-                    result = make_prediction(fire['latitude'], fire['longitude'], fire['brightness'], fire['id'])
+                    result = make_prediction(fire['latitude'], fire['longitude'], fire['brightness'])
                     if result:
                         st.session_state.prediction_result = result
                         st.success("✅ Prediction completed!")
@@ -615,9 +646,6 @@ with col2:
             if st.button("🗑️", help="Clear prediction"):
                 st.session_state.prediction_result = None
                 st.rerun()
-        
-        if len(st.session_state.prediction_cache) > 0:
-            st.caption(f"💾 {len(st.session_state.prediction_cache)} predictions cached")
     else:
         st.info("👈 Set location and click 'Predict Fire Spread' to see results")
         

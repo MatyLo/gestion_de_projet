@@ -7,8 +7,9 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 import uvicorn
 import os
+from datetime import datetime
 
-from prediction import predict_fire_spread
+from prediction import predict_fire_spread, predict_direction
 from fires import load_fires_from_csv, get_fire_statistics
 
 # Create FastAPI app
@@ -33,7 +34,10 @@ class PredictionRequest(BaseModel):
     lat: float = Field(..., description="Latitude of fire location", ge=-90, le=90)
     lng: float = Field(..., description="Longitude of fire location", ge=-180, le=180)
     brightness: Optional[float] = Field(350.0, description="Fire brightness/intensity", ge=0, le=1000)
+    date: datetime = Field(...,description="Date of the fire observation (ISO 8601 format)")
 
+class PredictResponse(BaseModel):
+    direction: float
 
 class BatchPredictionRequest(BaseModel):
     fire_ids: List[int] = Field(..., description="List of fire IDs to predict")
@@ -155,6 +159,30 @@ async def predict(request: PredictionRequest):
             detail=f"Prediction failed: {str(e)}"
         )
 
+
+# Direction Endpoint
+@app.post(
+    "/predict/direction",
+    summary="Predict fire spread direction",
+    description="Predicts the fire spread direction using location and date"
+)
+def predict_direction_endpoint(payload: PredictionRequest):
+    try:
+        prediction = predict_direction(
+            lat=payload.lat,
+            lng=payload.lng,
+            date=payload.date
+        )
+
+        return {
+            "direction": prediction
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Prediction failed: {str(e)}"
+        )
 
 # Batch prediction endpoint
 @app.post("/predict-batch")

@@ -96,6 +96,8 @@ if 'user_map_zoom' not in st.session_state:
     st.session_state.user_map_zoom = None
 if 'fire_just_selected' not in st.session_state:
     st.session_state.fire_just_selected = False
+if 'refresh_result' not in st.session_state:
+    st.session_state.refresh_result = None
 
 # Sidebar for inputs
 with st.sidebar:
@@ -111,6 +113,95 @@ with st.sidebar:
     # Active Fires mode
     if mode == "Active Fires":
         st.subheader("🔥 NASA FIRMS Data")
+        
+        with st.expander("🌍 Refresh Fire Data from API", expanded=False):
+            st.write("Fetch fresh fire data from NASA FIRMS")
+            
+            refresh_mode = st.radio(
+                "Select mode:",
+                ["Preset Region", "Custom Area"],
+                horizontal=True
+            )
+            
+            if refresh_mode == "Preset Region":
+                region = st.selectbox(
+                    "Region:",
+                    ["world", "usa", "europe", "australia", "brazil", "canada"],
+                    help="Select a preset region"
+                )
+                days = st.slider("Days of data:", 1, 10, 1)
+                
+                if st.button("🔄 Fetch from API", type="secondary"):
+                    with st.spinner("Fetching fresh fire data from NASA FIRMS..."):
+                        try:
+                            response = requests.post(
+                                f"{API_URL}/refresh-fires",
+                                json={"region": region, "days": days},
+                                timeout=30
+                            )
+                            if response.status_code == 200:
+                                result = response.json()
+                                if result.get('success'):
+                                    st.session_state.refresh_result = result
+                                    st.success(f"✅ {result['message']}")
+                                    st.info("Click 'Load Active Fires' below to see the new data")
+                                else:
+                                    st.warning(f"⚠️ {result.get('message', 'No data found')}")
+                            else:
+                                st.error(f"❌ Error: {response.status_code}")
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)}")
+            else:
+                col_lon1, col_lon2 = st.columns(2)
+                with col_lon1:
+                    min_lon = st.number_input("Min Longitude", -180.0, 180.0, -125.0)
+                with col_lon2:
+                    max_lon = st.number_input("Max Longitude", -180.0, 180.0, -66.0)
+                
+                col_lat1, col_lat2 = st.columns(2)
+                with col_lat1:
+                    min_lat = st.number_input("Min Latitude", -90.0, 90.0, 24.0)
+                with col_lat2:
+                    max_lat = st.number_input("Max Latitude", -90.0, 90.0, 49.0)
+                
+                days = st.slider("Days of data:", 1, 10, 1, key="custom_days")
+                
+                if st.button("🔄 Fetch from API", type="secondary", key="custom_fetch"):
+                    with st.spinner("Fetching fresh fire data from NASA FIRMS..."):
+                        try:
+                            response = requests.post(
+                                f"{API_URL}/refresh-fires",
+                                json={
+                                    "min_lon": min_lon,
+                                    "max_lon": max_lon,
+                                    "min_lat": min_lat,
+                                    "max_lat": max_lat,
+                                    "days": days
+                                },
+                                timeout=30
+                            )
+                            if response.status_code == 200:
+                                result = response.json()
+                                if result.get('success'):
+                                    st.session_state.refresh_result = result
+                                    st.success(f"✅ {result['message']}")
+                                    st.info("Click 'Load Active Fires' below to see the new data")
+                                else:
+                                    st.warning(f"⚠️ {result.get('message', 'No data found')}")
+                            else:
+                                st.error(f"❌ Error: {response.status_code}")
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)}")
+            
+            if st.session_state.refresh_result:
+                st.divider()
+                st.write("**Last Refresh:**")
+                result = st.session_state.refresh_result
+                st.write(f"Fires fetched: {result['count']}")
+                st.write(f"Region: {result.get('region', 'custom')}")
+                st.write(f"Days: {result['days']}")
+        
+        st.divider()
         
         st.session_state.auto_predict = st.checkbox(
             "Auto-predict on fire click",

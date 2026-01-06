@@ -39,6 +39,15 @@ class BatchPredictionRequest(BaseModel):
     fire_ids: List[int] = Field(..., description="List of fire IDs to predict")
 
 
+class RefreshFiresRequest(BaseModel):
+    region: Optional[str] = Field(None, description="Region name (usa, europe, australia, brazil, canada, world)")
+    min_lon: Optional[float] = Field(None, ge=-180, le=180)
+    max_lon: Optional[float] = Field(None, ge=-180, le=180)
+    min_lat: Optional[float] = Field(None, ge=-90, le=90)
+    max_lat: Optional[float] = Field(None, ge=-90, le=90)
+    days: int = Field(1, description="Number of days of data to fetch", ge=1, le=10)
+
+
 # Root endpoint
 @app.get("/")
 async def root():
@@ -49,6 +58,8 @@ async def root():
             "/predict": "POST - Predict fire spread",
             "/fires": "GET - Get active fires from NASA FIRMS data",
             "/predict-batch": "POST - Predict spread for multiple fires",
+            "/refresh-fires": "POST - Refresh fire data from NASA FIRMS API",
+            "/regions": "GET - Get available regions for fire data",
             "/health": "GET - Health check"
         }
     }
@@ -58,6 +69,18 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
+
+@app.get("/regions")
+async def get_regions():
+    """
+    Get available preset regions for fire data fetching
+    """
+    from api_request import REGIONS
+    return {
+        "regions": list(REGIONS.keys()),
+        "region_details": REGIONS
+    }
 
 
 # Fires endpoint
@@ -78,9 +101,9 @@ async def get_fires(
     """
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        csv_path = os.path.join(script_dir, "..", "data", "MODIS_C6_1_Global_24h.csv")
+        csv_path = os.path.join(script_dir, "..", "data", "world_hotspots.csv")
         if not os.path.exists(csv_path):
-            csv_path = os.path.join(script_dir, "data", "MODIS_C6_1_Global_24h.csv")
+            csv_path = os.path.join(script_dir, "data", "world_hotspots.csv")
         
         fires = load_fires_from_csv(
             filepath=csv_path,
@@ -175,6 +198,84 @@ async def predict_batch(request: BatchPredictionRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Batch prediction failed: {str(e)}"
+        )
+
+
+@app.post("/refresh-fires")
+async def refresh_fires(request: RefreshFiresRequest):
+    """
+    Fetch fresh fire data from NASA FIRMS API and update the CSV file.
+    
+    You can either:
+    - Use a preset region name (usa, europe, australia, brazil, canada, world)
+    - Specify custom bounding box coordinates (min_lon, max_lon, min_lat, max_lat)
+    
+    - **region**: Preset region name
+    - **min_lon, max_lon, min_lat, max_lat**: Custom bounding box
+    - **days**: Number of days of data to fetch (1-10)
+    
+    Returns updated fire data and saves to CSV file
+    """
+    import traceback
+    from api_request import get_firms_hotspots, REGIONS
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        csv_path = os.path.join(script_dir, "..", "data", "world_hotspots.csv")
+        if not os.path.exists(os.path.dirname(csv_path)):
+            csv_path = os.path.join(script_dir, "data", "world_hotspots.csv")
+        
+        if request.region:
+            if request.region not in REGIONS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid region. Available: {list(REGIONS.keys())}"
+                )
+            region_coords = REGIONS[request.region]
+            min_lon = region_coords["min_lon"]
+            max_lon = region_coords["max_lon"]
+            min_lat = region_coords["min_lat"]
+            max_lat = region_coords["max_lat"]
+        elif all(v is not None for v in [request.min_lon, request.max_lon, request.min_lat, request.max_lat]):
+            min_lon = request.min_lon
+            max_lon = request.max_lon
+            min_lat = request.min_lat
+            max_lat = request.max_lat
+        else:
+            min_lon, max_lon, min_lat, max_lat = -180, 180, -90, 90
+        
+        df = get_firms_hotspots(min_lon, max_lon, min_lat, max_lat, request.days)
+        
+        print(f"Columns returned from API: {list(df.columns)}")
+        print(f"First row sample: {df.head(1).to_dict('records') if not df.empty else 'Empty'}")
+        
+        if df.empty:
+            return {
+                "success": False,
+                "message": "No fire data found for the specified region/coordinates",
+                "count": 0
+            }
+        
+        df.to_csv(csv_path, index=False)
+        
+        fires = load_fires_from_csv(filepath=csv_path)
+        stats = get_fire_statistics(fires)
+        
+        return {
+            "success": True,
+            "message": f"Successfully fetched and saved {len(fires)} fires",
+            "count": len(fires),
+            "statistics": stats,
+            "region": request.region if request.region else "custom",
+            "days": request.days,
+            "csv_path": csv_path
+        }
+        
+    except Exception as e:
+        error_detail = f"Failed to refresh fires: {str(e)}\n{traceback.format_exc()}"
+        print(error_detail)
+        raise HTTPException(
+            status_code=500,
+            detail=error_detail
         )
 
 

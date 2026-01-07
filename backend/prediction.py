@@ -9,6 +9,65 @@ import os
 import requests
 from datetime import datetime
 from typing import Dict, Optional, Tuple
+from sklearn.base import BaseEstimator, RegressorMixin
+from sklearn.ensemble import RandomForestRegressor
+import ee
+ee.Initialize(project='airy-galaxy-471607-b6')
+
+
+class CircularRegressor(BaseEstimator, RegressorMixin):
+    """Regression for circular angles using sin/cos decomposition."""
+    
+    def __init__(self, base_estimator=None, n_estimators=300, max_depth=25):
+        self.base_estimator = base_estimator
+        self.n_estimators = n_estimators
+        self.max_depth = max_depth
+        self.model_sin = None
+        self.model_cos = None
+    
+    def fit(self, X, y):
+        y_rad = np.radians(y)
+        y_sin = np.sin(y_rad)
+        y_cos = np.cos(y_rad)
+        
+        if self.base_estimator is None:
+            self.model_sin = RandomForestRegressor(
+                n_estimators=self.n_estimators,
+                max_depth=self.max_depth,
+                min_samples_split=3,
+                min_samples_leaf=1,
+                random_state=42,
+                n_jobs=-1
+            )
+            self.model_cos = RandomForestRegressor(
+                n_estimators=self.n_estimators,
+                max_depth=self.max_depth,
+                min_samples_split=3,
+                min_samples_leaf=1,
+                random_state=43,
+                n_jobs=-1
+            )
+        else:
+            from copy import deepcopy
+            self.model_sin = deepcopy(self.base_estimator)
+            self.model_cos = deepcopy(self.base_estimator)
+        
+        self.model_sin.fit(X, y_sin)
+        self.model_cos.fit(X, y_cos)
+        return self
+    
+    def predict(self, X):
+        y_sin_pred = self.model_sin.predict(X)
+        y_cos_pred = self.model_cos.predict(X)
+        
+        magnitude = np.sqrt(y_sin_pred**2 + y_cos_pred**2)
+        y_sin_pred = y_sin_pred / (magnitude + 1e-8)
+        y_cos_pred = y_cos_pred / (magnitude + 1e-8)
+        
+        angles_rad = np.arctan2(y_sin_pred, y_cos_pred)
+        angles_deg = np.degrees(angles_rad) % 360
+        return angles_deg
+
 
 # Load models from the ml directory
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))

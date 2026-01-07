@@ -7,3 +7,5 @@ joblib
 scikit-learn
 requests
 python-multipart
+earthengine-api
+ipykernel

@@ -7,6 +7,17 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 import uvicorn
 import os
+import sys
+
+# Import CircularRegressor before prediction module (required for model unpickling)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ML_DIR = os.path.join(SCRIPT_DIR, "ml")
+sys.path.insert(0, ML_DIR)
+from circular_regressor import CircularRegressor
+
+# Make CircularRegressor available in __main__ namespace (required for model unpickling)
+import __main__
+__main__.CircularRegressor = CircularRegressor
 
 from prediction import predict_fire_spread
 from fires import load_fires_from_csv, get_fire_statistics

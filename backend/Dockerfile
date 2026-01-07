@@ -25,10 +25,11 @@ COPY prediction.py .
 COPY fires.py .
 COPY api_request.py .
 
-# Copy ML models
+# Copy ML models and required classes
 COPY ml/wildfire_spread_classifier_advanced.joblib ml/
 COPY ml/wildfire_spread_regressor_advanced.joblib ml/
 COPY ml/wildfire_direction_predictor.joblib ml/
+COPY ml/circular_regressor.py ml/
 
 # Expose port
 EXPOSE 8000

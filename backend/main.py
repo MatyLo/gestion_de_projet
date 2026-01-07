@@ -34,7 +34,7 @@ class PredictionRequest(BaseModel):
     lat: float = Field(..., description="Latitude of fire location", ge=-90, le=90)
     lng: float = Field(..., description="Longitude of fire location", ge=-180, le=180)
     brightness: Optional[float] = Field(350.0, description="Fire brightness/intensity", ge=0, le=1000)
-    date: datetime = Field(...,description="Date of the fire observation (ISO 8601 format)")
+    date: Optional[datetime] = None
 
 class PredictResponse(BaseModel):
     direction: float
@@ -171,7 +171,8 @@ def predict_direction_endpoint(payload: PredictionRequest):
         prediction = predict_direction(
             lat=payload.lat,
             lng=payload.lng,
-            date=payload.date
+            #date=payload.date
+            date = payload.date or datetime.utcnow()
         )
 
         return {

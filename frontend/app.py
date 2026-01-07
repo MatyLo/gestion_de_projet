@@ -330,6 +330,29 @@ with st.sidebar:
     
     st.divider()
     
+    # Date selection for direction prediction
+    st.header("📅 Prediction Date")
+    use_custom_date = st.checkbox(
+        "Use custom date",
+        value=False,
+        help="Use a specific date for direction prediction (default: today)"
+    )
+    
+    if use_custom_date:
+        prediction_date = st.date_input(
+            "Select date",
+            value=None,
+            help="Date for the prediction"
+        )
+        if prediction_date:
+            date_str = prediction_date.strftime("%Y-%m-%d")
+        else:
+            date_str = None
+    else:
+        date_str = None
+    
+    st.divider()
+    
     # Fire parameters
     if input_method != "Active Fires" or st.session_state.selected_fire_id is None:
         st.header("🔥 Fire Parameters")
@@ -351,8 +374,9 @@ with st.sidebar:
         predict_button = st.button("🚀 Predict Fire Spread", type="primary")
 
 # Function to make prediction
-def make_prediction(lat, lng, brightness):
+def make_prediction(lat, lng, brightness, date=None):
     try:
+        # Call main prediction endpoint
         response = requests.post(
             f"{API_URL}/predict",
             json={
@@ -363,10 +387,37 @@ def make_prediction(lat, lng, brightness):
             timeout=10
         )
         
-        if response.status_code == 200:
-            return response.json()
-        else:
+        if response.status_code != 200:
             return None
+            
+        result = response.json()
+        
+        # Call direction prediction endpoint
+        try:
+            direction_response = requests.post(
+                f"{API_URL}/predict/direction",
+                json={
+                    "lat": lat,
+                    "lng": lng,
+                    "date": date
+                },
+                timeout=10
+            )
+            
+            if direction_response.status_code == 200:
+                direction_result = direction_response.json()
+                # Add direction prediction to main result
+                result['predicted_direction'] = direction_result.get('direction')
+                result['has_direction_prediction'] = True
+            else:
+                result['has_direction_prediction'] = False
+                
+        except Exception as e:
+            print(f"Direction prediction failed: {str(e)}")
+            result['has_direction_prediction'] = False
+        
+        return result
+        
     except Exception as e:
         return None
 
@@ -375,7 +426,7 @@ if st.session_state.pending_prediction and mode == "Active Fires":
     if st.session_state.fires_data:
         fire = next((f for f in st.session_state.fires_data['fires'] if f['id'] == st.session_state.selected_fire_id), None)
         if fire:
-            result = make_prediction(fire['latitude'], fire['longitude'], fire['brightness'])
+            result = make_prediction(fire['latitude'], fire['longitude'], fire['brightness'], date_str)
             if result:
                 st.session_state.prediction_result = result
     st.session_state.pending_prediction = False
@@ -663,7 +714,7 @@ with col2:
             if input_method == "Active Fires" and st.session_state.selected_fire_id is not None:
                 fire = next((f for f in st.session_state.fires_data['fires'] if f['id'] == st.session_state.selected_fire_id), None)
                 if fire:
-                    result = make_prediction(fire['latitude'], fire['longitude'], fire['brightness'])
+                    result = make_prediction(fire['latitude'], fire['longitude'], fire['brightness'], date_str)
                     if result:
                         st.session_state.prediction_result = result
                         st.success("✅ Prediction completed!")
@@ -673,7 +724,7 @@ with col2:
                 else:
                     st.error("❌ Selected fire not found")
             else:
-                result = make_prediction(st.session_state.selected_lat, st.session_state.selected_lng, brightness)
+                result = make_prediction(st.session_state.selected_lat, st.session_state.selected_lng, brightness, date_str)
                 if result:
                     st.session_state.prediction_result = result
                     st.success("✅ Prediction completed!")
@@ -706,6 +757,14 @@ with col2:
             "Spread Direction",
             f"{result['spread_direction']:.0f}°"
         )
+        
+        # Show ML-predicted direction if available
+        if result.get('has_direction_prediction') and result.get('predicted_direction') is not None:
+            st.metric(
+                "ML Predicted Direction",
+                f"{result['predicted_direction']:.0f}°",
+                delta=f"Δ {abs(result['predicted_direction'] - result['spread_direction']):.0f}°"
+            )
         
         # Environmental data
         with st.expander("🌍 Environmental Data", expanded=True):
@@ -751,4 +810,3 @@ st.markdown("""
         <p><small>Data sources: Open-Meteo API for weather and elevation</small></p>
     </div>
 """, unsafe_allow_html=True)
-

@@ -10,6 +10,7 @@ import requests
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 import ee
+ee.Initialize(project='airy-galaxy-471607-b6')
 
 # Load models from the ml directory
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
